@@ -1,20 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route'; // Adjust path as necessary
-import OpenAI from 'openai';
-import { OpenAIStream, StreamingTextResponse } from 'ai';
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/genai';
-
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-// Initialize Gemini Client
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+import { streamText } from 'ai';
+import { openai } from '@ai-sdk/openai';
+import { google } from '@ai-sdk/google';
 
 // IMPORTANT! Set the runtime to edge
 export const runtime = 'edge';
+export const maxDuration = 30; // Or a more appropriate value
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -36,87 +29,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'modelName is required' }, { status: 400 });
     }
 
+    let result;
     if (modelProvider === 'openai') {
-      // Create a chat completion stream
-      const stream = await openai.chat.completions.create({
-        model: modelName, // Use modelName from request
-        messages: messages,
-        stream: true,
+      result = await streamText({
+        model: openai(modelName), // Pass modelName string directly
+        messages: messages, // Use original messages, streamText should handle formatting
       });
-
-      // Convert the stream to a StreamingTextResponse
-      const readableStream = OpenAIStream(stream);
-      return new StreamingTextResponse(readableStream);
-
     } else if (modelProvider === 'gemini') {
-      const transformGeminiMessages = (msgs: any[]) => {
-        let currentRole = "user"; // Gemini alternates user/model roles
-        const history = msgs.map(msg => {
-          if (msg.role === 'system') return null;
-          const role = msg.role === 'assistant' ? 'model' : 'user';
-          if (role === currentRole && role === "user") {
-            currentRole = "model";
-            return [{ role: "model", parts: [{ text: "Okay."}] },
-                    { role: "user", parts: [{ text: msg.content }] }];
-          } else if (role === currentRole && role === "model") {
-            currentRole = "user";
-            return [{ role: "user", parts: [{ text: "Understood."}] },
-                    { role: "model", parts: [{ text: msg.content }] }];
-          }
-          currentRole = role;
-          return { role, parts: [{ text: msg.content }] };
-        }).flat().filter(Boolean);
-
-        if (!history.length || history[0]?.role !== 'user') {
-            const userMessages = msgs.filter(m => m.role === 'user');
-            const lastUserMessage = userMessages.length > 0 ? userMessages[userMessages.length -1].content : "Hello";
-            return [{role: "user", parts: [{text: lastUserMessage}]}];
-        }
-        return history;
-      };
-
-      const currentGeminiContent = transformGeminiMessages(messages);
-
-      const safetySettings = [
-        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
-        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
-        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
-        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
-      ];
-
-      const geminiModel = genAI.getGenerativeModel({ model: modelName, safetySettings });
-      const streamResult = await geminiModel.generateContentStream({
-        contents: currentGeminiContent,
+      result = await streamText({
+        model: google(modelName), // Pass modelName string directly
+        messages: messages, // Use original messages, streamText should handle formatting
+        // Optional: Add safetySettings here if streamText or the provider supports it directly in this call
+        // safetySettings: [{ category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE }]
       });
-
-      const geminiStream = new ReadableStream({
-        async start(controller) {
-          try {
-            for await (const chunk of streamResult.stream) {
-              const text = chunk.text();
-              if (text) {
-                controller.enqueue(new TextEncoder().encode(text));
-              }
-            }
-          } catch (err) {
-            console.error("Error in Gemini stream: ", err);
-            controller.error(err);
-          }
-          controller.close();
-        }
-      });
-      return new StreamingTextResponse(geminiStream);
-
     } else {
       return NextResponse.json({ message: 'Invalid modelProvider' }, { status: 400 });
     }
+    return result.toDataStreamResponse();
 
-  } catch (error) {
+  } catch (error: any) { // More generic error type
     console.error('Error in chat completions API:', error);
-    if (error instanceof OpenAI.APIError) { // Keep OpenAI specific error handling if needed
-      return NextResponse.json({ message: error.message, code: error.code }, { status: error.status || 500 });
-    }
-    // Add more specific error handling for Gemini if available, or generic
-    return NextResponse.json({ message: 'Error processing chat completion' }, { status: 500 });
+    // Consider using error.message or a more structured error from the AI SDK
+    return NextResponse.json(
+      { message: error.message || 'Error processing chat completion' },
+      { status: error.status || error.statusCode || 500 } // Use status from error if available
+    );
   }
 }

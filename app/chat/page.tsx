@@ -24,6 +24,7 @@ interface ChatMessageFromDB {
   role: 'USER' | 'ASSISTANT';
   createdAt: Date;
   userId: string;
+  sessionId: string; // Added sessionId
 }
 
 // Enhanced ChatMessageContent component with animations
