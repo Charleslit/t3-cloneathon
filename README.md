@@ -45,6 +45,7 @@ Environment variables are crucial for configuring database connections, authenti
     *   `NEXTAUTH_URL`
     *   `NEXTAUTH_SECRET`
     *   `OPENAI_API_KEY`
+    *   `GEMINI_API_KEY`
 
     **Important:** Ensure your PostgreSQL database server is running and accessible before proceeding to the next step. For local development, you can use Docker as described in `ENVIRONMENT_SETUP.md`.
 
@@ -63,6 +64,22 @@ Start the Next.js development server:
 pnpm dev
 ```
 The application should now be running, typically at `http://localhost:3000` (or the port specified in `NEXTAUTH_URL`).
+
+## Supported AI Models
+
+The application now supports AI models from multiple providers. The backend API (`/api/chat/completions`) expects a `modelProvider` and `modelName` in the request body to select the desired model.
+
+Currently supported providers and example models:
+
+*   **OpenAI:**
+    *   `gpt-3.5-turbo` (Default if no provider/model specified, for backward compatibility if desired - though current backend requires it)
+    *   Other OpenAI models can be used if specified.
+*   **Google Gemini:**
+    *   `gemini-1.5-flash-latest` (or e.g., `gemini-1.5-flash-001`)
+    *   Other Gemini models available via the API can also be specified.
+
+Configuration for model selection and API interaction is primarily handled in `app/api/chat/completions/route.ts`.
+Ensure you have the necessary API keys (`OPENAI_API_KEY`, `GEMINI_API_KEY`) configured in your environment. See [ENVIRONMENT_SETUP.md](./ENVIRONMENT_SETUP.md).
 
 ## Testing Checklist
 
@@ -125,6 +142,7 @@ We recommend deploying this Next.js application to [Vercel](https://vercel.com),
         *   `NEXTAUTH_URL`: The production URL Vercel assigns to your project (e.g., `https://your-project-name.vercel.app`). You'll usually know this after the first deployment, so you might need to update it.
         *   `NEXTAUTH_SECRET`: A strong, unique secret for production. Generate a new one specifically for your deployed application.
         *   `OPENAI_API_KEY`: Your OpenAI API key.
+        *   `GEMINI_API_KEY`: Your Google Gemini API key.
 
 6.  **Deploy:**
     *   Click the "Deploy" button. Vercel will start the build process and deploy your application.

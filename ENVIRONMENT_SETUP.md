@@ -58,6 +58,18 @@ This key is required to use OpenAI's language models for chat functionality.
     ```
     **Remember to replace `"your_openai_api_key_here"` with your actual key.**
 
+### d. Gemini API Key (`GEMINI_API_KEY`)
+
+This key is required to use Google's Gemini models for chat functionality.
+
+1.  Go to [Google AI Studio](https://aistudio.google.com/app/apikey) (or the relevant Google Cloud Console page for Gemini API keys).
+2.  Create a new API key.
+3.  Copy this key and add it to your `.env.local` file:
+    ```
+    GEMINI_API_KEY="your_gemini_api_key_here"
+    ```
+    **Remember to replace `"your_gemini_api_key_here"` with your actual key.**
+
 ### Example `.env.local` structure:
 
 ```env
@@ -70,6 +82,9 @@ NEXTAUTH_SECRET="your_generated_nextauth_secret_here" # Replace with 'openssl ra
 
 # OpenAI
 OPENAI_API_KEY="sk-your_actual_openai_api_key_here" # Replace with your real key
+
+# Gemini
+GEMINI_API_KEY="your_gemini_api_key_here" # Replace with your real key
 ```
 
 **Important Security Note:** Always keep your `.env.local` file out of version control. Ensure `.env.local` is listed in your `.gitignore` file.
