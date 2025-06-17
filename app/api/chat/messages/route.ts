@@ -3,12 +3,14 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route'; // Adjust path as necessary
 import prisma from '@/lib/prisma';
 import { Role } from '@prisma/client'; // Import the Role enum from Prisma
+import { createApiResponse, createErrorResponse } from '@/lib/api/response';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
 
   if (!session || !session.user || !(session.user as any).id) {
-    return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json(createErrorResponse('UNAUTHORIZED', 'Unauthorized'), { status: 401 });
   }
 
   const userId = (session.user as any).id;
@@ -17,12 +19,12 @@ export async function POST(request: Request) {
     const { content, role, sessionId: requestedSessionId } = await request.json(); // Expect sessionId in request
 
     if (!content || !role) {
-      return NextResponse.json({ message: 'Missing content or role' }, { status: 400 });
+      return NextResponse.json(createErrorResponse('BAD_REQUEST', 'Missing content or role'), { status: 400 });
     }
 
     // Validate role
     if (role !== Role.USER && role !== Role.ASSISTANT) {
-      return NextResponse.json({ message: 'Invalid role specified' }, { status: 400 });
+      return NextResponse.json(createErrorResponse('BAD_REQUEST', 'Invalid role specified'), { status: 400 });
     }
 
     let currentSessionId = requestedSessionId;
@@ -42,7 +44,7 @@ export async function POST(request: Request) {
         where: { id: currentSessionId },
       });
       if (!chatSession || chatSession.userId !== userId) {
-        return NextResponse.json({ message: 'Invalid or unauthorized sessionId' }, { status: 403 });
+        return NextResponse.json(createErrorResponse('FORBIDDEN', 'Invalid or unauthorized sessionId'), { status: 403 });
       }
     }
 
@@ -56,10 +58,10 @@ export async function POST(request: Request) {
     });
 
     // Return the newMessage, which now includes the sessionId it was saved with.
-    return NextResponse.json(newMessage, { status: 201 });
+    return NextResponse.json(createApiResponse(newMessage), { status: 201 });
   } catch (error) {
-    console.error('Error saving chat message:', error);
-    return NextResponse.json({ message: 'Error saving message' }, { status: 500 });
+    logger.error('Error saving chat message:', error);
+    return NextResponse.json(createErrorResponse('INTERNAL_ERROR', 'Error saving message'), { status: 500 });
   }
 }
 
@@ -67,7 +69,7 @@ export async function GET(request: Request) {
   const session = await getServerSession(authOptions);
 
   if (!session || !session.user || !(session.user as any).id) {
-    return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json(createErrorResponse('UNAUTHORIZED', 'Unauthorized'), { status: 401 });
   }
 
   const userId = (session.user as any).id;
@@ -75,7 +77,7 @@ export async function GET(request: Request) {
 
   const sessionId = searchParams.get('sessionId');
   if (!sessionId) {
-    return NextResponse.json({ message: 'sessionId is required' }, { status: 400 });
+    return NextResponse.json(createErrorResponse('BAD_REQUEST', 'sessionId is required'), { status: 400 });
   }
 
   // Verify the session belongs to the user before fetching messages
@@ -86,7 +88,7 @@ export async function GET(request: Request) {
   if (!chatSession || chatSession.userId !== userId) {
     // If session doesn't exist or doesn't belong to user, return empty or error
     // For security, could also return 404 or an empty list as if session has no messages
-    return NextResponse.json({ message: 'Invalid or unauthorized sessionId' }, { status: 403 });
+    return NextResponse.json(createErrorResponse('FORBIDDEN', 'Invalid or unauthorized sessionId'), { status: 403 });
   }
 
   const page = parseInt(searchParams.get('page') || '1', 10);
@@ -117,13 +119,13 @@ export async function GET(request: Request) {
 
     const totalPages = Math.ceil(totalMessages / pageSize);
 
-    return NextResponse.json({
+    return NextResponse.json(createApiResponse({
       messages,
       currentPage: page,
       totalPages,
-    }, { status: 200 });
+    }), { status: 200 });
   } catch (error) {
-    console.error('Error fetching chat history:', error);
-    return NextResponse.json({ message: 'Error fetching messages' }, { status: 500 });
+    logger.error('Error fetching chat history:', error);
+    return NextResponse.json(createErrorResponse('INTERNAL_ERROR', 'Error fetching messages'), { status: 500 });
   }
 }

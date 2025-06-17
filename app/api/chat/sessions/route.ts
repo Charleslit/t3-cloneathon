@@ -2,12 +2,14 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route'; // Adjust path if necessary
 import prisma from '@/lib/prisma';
+import { createApiResponse, createErrorResponse } from '@/lib/api/response';
+import { logger } from '@/lib/logger';
 
 export async function GET(request: Request) {
   const session = await getServerSession(authOptions);
 
   if (!session || !session.user || !(session.user as any).id) {
-    return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json(createErrorResponse('UNAUTHORIZED', 'Unauthorized'), { status: 401 });
   }
 
   const userId = (session.user as any).id;
@@ -22,9 +24,9 @@ export async function GET(request: Request) {
       },
     });
 
-    return NextResponse.json(chatSessions, { status: 200 });
+    return NextResponse.json(createApiResponse(chatSessions), { status: 200 });
   } catch (error) {
-    console.error('Error fetching chat sessions:', error);
-    return NextResponse.json({ message: 'Error fetching chat sessions' }, { status: 500 });
+    logger.error('Error fetching chat sessions:', error);
+    return NextResponse.json(createErrorResponse('INTERNAL_ERROR', 'Error fetching chat sessions'), { status: 500 });
   }
 }

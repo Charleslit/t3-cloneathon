@@ -2,12 +2,14 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route'; // Adjust path if necessary
 import prisma from '@/lib/prisma';
+import { createApiResponse, createErrorResponse } from '@/lib/api/response';
+import { logger } from '@/lib/logger';
 
 export async function GET(request: Request) {
   const session = await getServerSession(authOptions);
 
   if (!session || !session.user || !(session.user as any).id) {
-    return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json(createErrorResponse('UNAUTHORIZED', 'Unauthorized'), { status: 401 });
   }
 
   const userId = (session.user as any).id;
@@ -15,7 +17,7 @@ export async function GET(request: Request) {
 
   const query = searchParams.get('query');
   if (!query || query.trim().length === 0) {
-    return NextResponse.json({ message: 'Search query is required' }, { status: 400 });
+    return NextResponse.json(createErrorResponse('BAD_REQUEST', 'Search query is required'), { status: 400 });
   }
 
   const page = parseInt(searchParams.get('page') || '1', 10);
@@ -56,17 +58,17 @@ export async function GET(request: Request) {
 
     const totalPages = Math.ceil(totalResults / pageSize);
 
-    return NextResponse.json({
+    return NextResponse.json(createApiResponse({
       messages: matchingMessages,
       currentPage: page,
       totalPages: totalPages,
       totalResults: totalResults,
-    }, { status: 200 });
+    }), { status: 200 });
 
   } catch (error) {
-    console.error('Error searching chat messages:', error);
+    logger.error('Error searching chat messages:', error);
     // Log the actual error for server-side debugging
     // Consider more specific error messages for client if appropriate
-    return NextResponse.json({ message: 'Error searching messages' }, { status: 500 });
+    return NextResponse.json(createErrorResponse('INTERNAL_ERROR', 'Error searching messages'), { status: 500 });
   }
 }

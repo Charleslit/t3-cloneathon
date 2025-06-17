@@ -1,3 +1,8 @@
+"use client";
+
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   MessageSquare,
@@ -12,6 +17,18 @@ import Link from "next/link";
 import Image from "next/image";
 
 export default function HomePage() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (status === "authenticated") {
+      router.replace("/chat");
+    }
+  }, [status, router]);
+
+  if (status === "loading") return null;
+  if (status === "authenticated") return null;
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-background/95">
       {/* Hero Section */}

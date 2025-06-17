@@ -136,6 +136,9 @@ export default function ChatPage() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [scrollToMessageId, setScrollToMessageId] = useState<string | null>(null);
 
+  const [chatApi, setChatApi] = useState("/api/chat/completions");
+  const [modelProvider, setModelProvider] = useState("gemini");
+  const [modelName, setModelName] = useState("gemini-2.0-flash");
 
   const {
     messages,
@@ -146,36 +149,15 @@ export default function ChatPage() {
     isLoading, // This is the Vercel AI SDK's loading state, primarily for AI response generation
     error: chatError,
   } = useChat({
-    api: "/api/chat/completions", // This remains for AI completion
-    // We'll handle message saving, including sessionId, in handleSubmitWithSave and a modified onFinish
-    onFinish: async (message: VercelChatMessage) => {
-      // message here is the AI's response
-      if (!currentSessionId) {
-        console.error("No currentSessionId available to save AI message.");
-        setDbError("Critical: Cannot save AI message, session ID missing.");
-        return;
-      }
-      try {
-        setDbError(null);
-        const response = await fetch("/api/chat/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            content: message.content,
-            role: "ASSISTANT",
-            sessionId: currentSessionId
-          }),
-        });
-        if (!response.ok) {
-          const errData = await response.json();
-          setDbError(`Failed to save AI message: ${errData.message}`);
-        }
-        // Optionally, update the message in `messages` state with the ID from DB if needed
-      } catch (err) {
-        setDbError(`Error saving AI message: ${err instanceof Error ? err.message : String(err)}`);
-      }
+    api: chatApi,
+    body: {
+      modelProvider,
+      modelName,
     },
-    onError: (error) => console.error("Chat completion error:", error)
+    onError: (error) => {
+      console.error("Chat error:", error);
+      setDbError(error.message);
+    }
   });
 
 
@@ -189,16 +171,24 @@ export default function ChatPage() {
 
     // This function will be called to fetch chat history for the currentSessionId
     const fetchHistory = async (sessionId: string, pageNum: number) => {
+      console.log(`[ChatPage] fetchHistory called: sessionId=${sessionId}, pageNum=${pageNum}`);
       if (!sessionId) {
+        console.log("[ChatPage] No sessionId, clearing messages and setting initialLoadComplete to true.");
         setMessages([]);
         setInitialLoadComplete(true); // Nothing to load
         setCurrentPage(1);
         setTotalPages(1);
         return;
       }
-      if (pageNum > 1 && isLoadingMore) return;
+      if (pageNum > 1 && isLoadingMore) {
+        console.log("[ChatPage] Already loading more, skipping fetchHistory.");
+        return;
+      }
       // Allow refetch of page 1 if initialLoadComplete is false for the current session
-      if (pageNum > 1 && currentPage >= totalPages && totalPages !== 1 && initialLoadComplete) return;
+      if (pageNum > 1 && currentPage >= totalPages && totalPages !== 1 && initialLoadComplete) {
+        console.log("[ChatPage] Already at last page, skipping fetchHistory.");
+        return;
+      }
 
 
       if (pageNum > 1) {
@@ -218,20 +208,23 @@ export default function ChatPage() {
         const response = await fetch(`/api/chat/messages?sessionId=${sessionId}&page=${pageNum}&pageSize=20`);
         if (!response.ok) {
           const errData = await response.json();
-          setDbError(`Failed to load chat history (session: ${sessionId}, page ${pageNum}): ${errData.message}`);
-          if (response.status === 403 || response.status === 404) { // Unauthorized or not found
-             console.error("Session invalid or user not authorized for session:", sessionId);
-             // Potentially clear currentSessionId or redirect
+          setDbError(`Failed to load chat history (session: ${sessionId}, page ${pageNum}): ${errData.error?.message || errData.message}`);
+          if (response.status === 403 || response.status === 404) {
+            console.error("Session invalid or user not authorized for session:", sessionId);
           }
           if (pageNum > 1) setIsLoadingMore(false);
-          else setInitialLoadComplete(true); // Allow UI to render even if page 1 fails
+          else setInitialLoadComplete(true);
           return;
         }
         const data = await response.json();
-        const historyFromDb: ChatMessageFromDB[] = data.messages;
+        if (data.error) {
+          setDbError(`Failed to load chat history (session: ${sessionId}, page ${pageNum}): ${data.error.message}`);
+          return;
+        }
+        const historyFromDb: ChatMessageFromDB[] = data.data.messages;
 
-        setTotalPages(data.totalPages);
-        setCurrentPage(data.currentPage);
+        setTotalPages(data.data.totalPages);
+        setCurrentPage(data.data.currentPage);
 
         const vercelAiMessages: VercelChatMessage[] = historyFromDb.map(msg => ({
           id: msg.id,
@@ -342,6 +335,7 @@ export default function ChatPage() {
     if (!input.trim()) return;
 
     const userMessageContent = input;
+    console.log(`[ChatPage] handleSubmitWithSave: userMessageContent=${userMessageContent}, currentSessionId=${currentSessionId}`);
     // Add message to UI optimistically, but it won't have the final ID or session ID yet.
     // This temporary message will be updated or replaced once the backend confirms.
     // For simplicity, we might avoid adding it here and let it be added when `messages` state is updated from fetchHistory or after save.
@@ -364,12 +358,17 @@ export default function ChatPage() {
 
       if (!response.ok) {
         const errData = await response.json();
-        setDbError(`Failed to save your message: ${errData.message}`);
+        setDbError(`Failed to save your message: ${errData.error?.message || errData.message}`);
         // If saving fails, the optimistic message from useChat might need removal or an error state.
         return;
       }
 
-      const savedUserMessage: ChatMessageFromDB = await response.json();
+      const savedUserMessageResp = await response.json();
+      if (savedUserMessageResp.error) {
+        setDbError(`Failed to save your message: ${savedUserMessageResp.error.message}`);
+        return;
+      }
+      const savedUserMessage: ChatMessageFromDB = savedUserMessageResp.data;
 
       // CRITICAL: Update currentSessionId if it was new or changed by the backend
       if (savedUserMessage.sessionId && savedUserMessage.sessionId !== currentSessionId) {
@@ -535,13 +534,17 @@ export default function ChatPage() {
                     const response = await fetch(`/api/chat/messages?sessionId=${currentSessionId}&page=${currentPage + 1}&pageSize=20`);
                     if (!response.ok) {
                       const errData = await response.json();
-                      setDbError(`Failed to load more messages: ${errData.message || response.statusText}`);
+                      setDbError(`Failed to load more messages: ${errData.error?.message || errData.message || response.statusText}`);
                       return;
                     }
                     const data = await response.json();
-                    const newHistory: ChatMessageFromDB[] = data.messages;
-                    setTotalPages(data.totalPages);
-                    setCurrentPage(data.currentPage);
+                    if (data.error) {
+                      setDbError(`Failed to load more messages: ${data.error.message}`);
+                      return;
+                    }
+                    const newHistory: ChatMessageFromDB[] = data.data.messages;
+                    setTotalPages(data.data.totalPages);
+                    setCurrentPage(data.data.currentPage);
                     const vercelNewMessages: VercelChatMessage[] = newHistory.map(msg => ({ id: msg.id, content: msg.content, role: msg.role.toLowerCase() as 'user' | 'assistant', createdAt: new Date(msg.createdAt)}));
                     setMessages(prev => [...vercelNewMessages, ...prev]);
                   } catch (error) {
@@ -742,6 +745,50 @@ export default function ChatPage() {
           </motion.div>
         </form>
       </motion.footer>
+
+      {/* Chat Backend & Model Toggle */}
+      <div className="mb-4 flex flex-col gap-2">
+        <label>
+          <span>Chat Backend: </span>
+          <select value={chatApi} onChange={e => setChatApi(e.target.value)}>
+            <option value="/api/chat/completions">Completions (Gemini/OpenAI)</option>
+            <option value="/api/chat/route">Streaming (OpenAI GPT-4o)</option>
+            <option value="/api/chat/route.tools">Advanced Tools/Multistep</option>
+          </select>
+        </label>
+        {chatApi === "/api/chat/completions" && (
+          <div className="flex flex-col gap-2">
+            <label>
+              <span>Model Provider: </span>
+              <select value={modelProvider} onChange={e => setModelProvider(e.target.value)}>
+                <option value="gemini">Gemini</option>
+                <option value="openai">OpenAI</option>
+                {/* Add more providers as needed */}
+              </select>
+            </label>
+            {modelProvider === "gemini" && (
+              <label>
+                <span>Model: </span>
+                <select value={modelName} onChange={e => setModelName(e.target.value)}>
+                  <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                  <option value="gemini-pro">Gemini Pro</option>
+                  {/* Add more Gemini models as needed */}
+                </select>
+              </label>
+            )}
+            {modelProvider === "openai" && (
+              <label>
+                <span>Model: </span>
+                <select value={modelName} onChange={e => setModelName(e.target.value)}>
+                  <option value="gpt-4o">GPT-4o</option>
+                  <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                  {/* Add more OpenAI models as needed */}
+                </select>
+              </label>
+            )}
+          </div>
+        )}
+      </div>
       </div> {/* End Main Chat Area Flex Col */}
     </div>
   );

@@ -1,58 +1,86 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route'; // Adjust path as necessary
+import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { streamText } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { google } from '@ai-sdk/google';
+import { checkRateLimit } from '@/lib/rate-limiter';
+import { createErrorResponse } from '@/lib/api/response';
+import { logger } from '@/lib/logger';
 
-// IMPORTANT! Set the runtime to edge
-export const runtime = 'edge';
-export const maxDuration = 30; // Or a more appropriate value
+export const runtime = 'nodejs';
+export const maxDuration = 300; // Increased timeout
 
 export async function POST(request: NextRequest) {
-  const session = await getServerSession(authOptions);
-
-  if (!session || !session.user || !(session.user as any).id) {
-    return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
-  }
-
   try {
-    const { messages, modelProvider, modelName } = await request.json();
+    const session = await getServerSession(authOptions);
 
-    if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      return NextResponse.json({ message: 'Messages are required' }, { status: 400 });
+    if (!session?.user) {
+      return NextResponse.json(createErrorResponse('UNAUTHORIZED', 'Unauthorized'), { status: 401 });
     }
-    if (!modelProvider || typeof modelProvider !== 'string') {
-      return NextResponse.json({ message: 'modelProvider is required' }, { status: 400 });
+
+    const body = await request.json();
+    const { messages } = body;
+    
+    if (!messages?.length) {
+      return NextResponse.json(createErrorResponse('BAD_REQUEST', 'Messages are required'), { status: 400 });
     }
-    if (!modelName || typeof modelName !== 'string') {
-      return NextResponse.json({ message: 'modelName is required' }, { status: 400 });
+
+    // Default to OpenAI if no provider specified
+    const modelProvider = body.modelProvider || 'gemini';
+    const modelName = body.modelName || 'gemini-pro';
+
+    // Check rate limit before processing
+    const isWithinLimit = await checkRateLimit(modelProvider);
+    if (!isWithinLimit) {
+      return NextResponse.json(
+        createErrorResponse('RATE_LIMIT', `Rate limit exceeded for ${modelProvider}. Please try again later.`),
+        { status: 429 }
+      );
     }
 
     let result;
     if (modelProvider === 'openai') {
-      result = await streamText({
-        model: openai(modelName), // Pass modelName string directly
-        messages: messages, // Use original messages, streamText should handle formatting
-      });
-    } else if (modelProvider === 'gemini') {
-      result = await streamText({
-        model: google(modelName), // Pass modelName string directly
-        messages: messages, // Use original messages, streamText should handle formatting
-        // Optional: Add safetySettings here if streamText or the provider supports it directly in this call
-        // safetySettings: [{ category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE }]
-      });
-    } else {
-      return NextResponse.json({ message: 'Invalid modelProvider' }, { status: 400 });
-    }
-    return result.toDataStreamResponse();
+      interface ChatMessage {
+        content: string;
+        role: string;
+      }
 
-  } catch (error: any) { // More generic error type
-    console.error('Error in chat completions API:', error);
-    // Consider using error.message or a more structured error from the AI SDK
-    return NextResponse.json(
-      { message: error.message || 'Error processing chat completion' },
-      { status: error.status || error.statusCode || 500 } // Use status from error if available
-    );
+      const textStreamResult = await streamText({
+        model: openai(modelName),
+        messages: messages.map((m: ChatMessage) => ({
+          content: m.content,
+          role: m.role.toLowerCase()
+        }))
+      });
+
+      return new Response(textStreamResult.textStream);
+
+    } else if (modelProvider === 'gemini') {
+      const textStreamResult = await streamText({
+        model: google(modelName),
+        messages: messages
+      });
+
+      return new Response(textStreamResult.textStream);
+    } else {
+      return NextResponse.json(createErrorResponse('BAD_REQUEST', 'Invalid model provider'), { status: 400 });
+    }
+
+  } catch (error) {
+    logger.error('Chat completion error:', error);
+    let errorMessage = 'Error processing chat completion';
+    let statusCode = 500;
+    if (typeof error === 'object' && error !== null) {
+      if ('message' in error && typeof (error as any).message === 'string') {
+        errorMessage = (error as any).message;
+      }
+      if ('status' in error && typeof (error as any).status === 'number') {
+        statusCode = (error as any).status;
+      } else if ('statusCode' in error && typeof (error as any).statusCode === 'number') {
+        statusCode = (error as any).statusCode;
+      }
+    }
+    return NextResponse.json(createErrorResponse('INTERNAL_ERROR', errorMessage), { status: statusCode });
   }
 }

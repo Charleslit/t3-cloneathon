@@ -1,17 +1,19 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma'; // Import Prisma client
 import bcrypt from 'bcryptjs'; // Import bcryptjs
+import { createApiResponse, createErrorResponse } from '@/lib/api/response';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: Request) {
   try {
     const { email, password, name } = await request.json();
 
     if (!email || !password) {
-      return NextResponse.json({ message: 'Email and password are required' }, { status: 400 });
+      return NextResponse.json(createErrorResponse('BAD_REQUEST', 'Email and password are required'), { status: 400 });
     }
 
     if (password.length < 6) {
-      return NextResponse.json({ message: 'Password must be at least 6 characters long' }, { status: 400 });
+      return NextResponse.json(createErrorResponse('BAD_REQUEST', 'Password must be at least 6 characters long'), { status: 400 });
     }
 
     // Check if user already exists
@@ -20,7 +22,7 @@ export async function POST(request: Request) {
     });
 
     if (existingUser) {
-      return NextResponse.json({ message: 'User with this email already exists' }, { status: 409 }); // 409 Conflict
+      return NextResponse.json(createErrorResponse('CONFLICT', 'User with this email already exists'), { status: 409 }); // 409 Conflict
     }
 
     // Hash the password
@@ -38,12 +40,12 @@ export async function POST(request: Request) {
     // Don't return the password in the response
     const { password: _, ...userWithoutPassword } = user;
 
-    return NextResponse.json({ message: 'User registered successfully', user: userWithoutPassword }, { status: 201 });
+    return NextResponse.json(createApiResponse({ message: 'User registered successfully', user: userWithoutPassword }), { status: 201 });
 
   } catch (error) {
-    console.error('Registration error:', error);
+    logger.error('Registration error:', error);
     // Check for specific Prisma errors if needed, e.g., P2002 for unique constraint violation
     // though the check above should catch existing email.
-    return NextResponse.json({ message: 'An unexpected error occurred during registration' }, { status: 500 });
+    return NextResponse.json(createErrorResponse('INTERNAL_ERROR', 'An unexpected error occurred during registration'), { status: 500 });
   }
 }

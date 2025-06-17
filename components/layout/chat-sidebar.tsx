@@ -80,8 +80,8 @@ export default function ChatSidebar({ onSessionSelect, onNewChat, currentSession
           const errorData = await response.json();
           throw new Error(errorData.message || `Failed to fetch sessions: ${response.status}`);
         }
-        const data: ChatSession[] = await response.json();
-        setSessions(data);
+        const apiResponse = await response.json();
+        setSessions(apiResponse.data || []);
       } catch (err) {
         setSessionsError(err instanceof Error ? err.message : String(err));
       } finally {
